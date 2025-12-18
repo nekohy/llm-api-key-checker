@@ -2035,20 +2035,28 @@ const htmlContent = `<!DOCTYPE html>
         });
         if (balanceResponse.ok) {
           const data = await balanceResponse.json();
-          // 优先使用 USD，其次 CNY，最后其他币种
-          const usdInfo = data.balance_infos?.find(b => b.currency === 'USD');
-          const cnyInfo = data.balance_infos?.find(b => b.currency === 'CNY');
-          const balanceInfo = usdInfo || cnyInfo || data.balance_infos?.[0];
-      
-          if (balanceInfo) {
-            const balance = parseFloat(balanceInfo.total_balance);
-            return { 
-              token, 
-              isValid: true, 
-              balance: balance,
-              currency: balanceInfo.currency,  // 添加币种信息
-              grantedBalance: parseFloat(balanceInfo.granted_balance || 0),
-              toppedUpBalance: parseFloat(balanceInfo.topped_up_balance || 0)
+          // 如果有多个币种，收集所有币种信息
+          if (data.balance_infos && data.balance_infos.length > 0) {
+            const allBalances = data.balance_infos.map(info => ({
+              currency: info.currency,
+              total: parseFloat(info.total_balance),
+              granted: parseFloat(info.granted_balance || 0),
+              toppedUp: parseFloat(info.topped_up_balance || 0)
+            }));
+
+            // 优先使用 USD，其次 CNY，用于主显示
+            const usdInfo = data.balance_infos.find(b => b.currency === 'USD');
+            const cnyInfo = data.balance_infos.find(b => b.currency === 'CNY');
+            const mainBalanceInfo = usdInfo || cnyInfo || data.balance_infos[0];
+
+            return {
+              token,
+              isValid: true,
+              balance: parseFloat(mainBalanceInfo.total_balance),
+              currency: mainBalanceInfo.currency,
+              grantedBalance: parseFloat(mainBalanceInfo.granted_balance || 0),
+              toppedUpBalance: parseFloat(mainBalanceInfo.topped_up_balance || 0),
+              allBalances: allBalances  // 添加所有币种信息
             };
           }
           return { token, isValid: true, balance: -1, message: "有效但无法获取余额" };
@@ -2068,7 +2076,16 @@ const htmlContent = `<!DOCTYPE html>
         });
         if (balanceResponse.ok) {
           const data = await balanceResponse.json();
-          return { token, isValid: true, balance: data.data?.available_balance ?? -1 };
+          const availableBalance = data.data?.available_balance ?? -1;
+          const cashBalance = data.data?.cash_balance ?? 0;
+          const voucherBalance = data.data?.voucher_balance ?? 0;
+          return {
+            token,
+            isValid: true,
+            balance: availableBalance,
+            cashBalance: cashBalance,
+            voucherBalance: voucherBalance
+          };
         }
         const { message, rawError } = await handleApiError(balanceResponse);
         return { token, isValid: false, message, rawError, error: true };
@@ -2271,25 +2288,6 @@ const htmlContent = `<!DOCTYPE html>
         });
         actionsDiv.appendChild(detailsBtn);
       }
-// DeepSeek 特殊处理 - 添加这部分
-if (currentProvider === 'deepseek' && res.currency) {
-  const detailsBtn = document.createElement('button');
-  detailsBtn.className = 'view-details-btn';
-  detailsBtn.innerHTML = '💰';
-  detailsBtn.title = '查看余额详情';
-  detailsBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    let details = \`币种: \${res.currency}\\n总余额: \${res.balance} \${res.currency}\`;
-    if (res.grantedBalance !== undefined) {
-      details += \`\\n赠送余额: \${res.grantedBalance} \${res.currency}\`;
-    }
-    if (res.toppedUpBalance !== undefined) {
-      details += \`\\n充值余额: \${res.toppedUpBalance} \${res.currency}\`;
-    }
-    showCustomModal(details, 'info', 'DeepSeek 余额详情');
-  });
-  actionsDiv.appendChild(detailsBtn);
-}
       // 错误详情按钮
       if ((category === 'invalid' || category === 'rateLimit') && res.rawError) {
         const viewErrorBtn = document.createElement('button');
@@ -2433,7 +2431,19 @@ if (currentProvider === 'deepseek' && res.currency) {
           // OpenRouter 特殊显示
           if (currentProvider === 'openrouter' && res.totalBalance !== undefined) {
             displayText = \`\${res.token} <span class="message">(余额: <span class="balance-\${balClass}">\${bal} / \${res.totalBalance}</span>)</span>\`;
-          } else if (res.currency) {
+          }
+          // DeepSeek 特殊显示 - 显示所有币种
+          else if (currentProvider === 'deepseek' && res.allBalances && res.allBalances.length > 0) {
+            let balanceDetails = res.allBalances.map(b =>
+              \`\${b.currency}: \${b.total}(赠:\${b.granted} 充:\${b.toppedUp})\`
+            ).join(' | ');
+            displayText = \`\${res.token} <span class="message">(\${balanceDetails})</span>\`;
+          }
+          // Moonshot 特殊显示 - 显示 cash 和 voucher
+          else if (currentProvider === 'moonshot' && (res.cashBalance !== undefined || res.voucherBalance !== undefined)) {
+            displayText = \`\${res.token} <span class="message">(总: <span class="balance-\${balClass}">\${bal}</span> | 现金: \${res.cashBalance} | 券: \${res.voucherBalance})</span>\`;
+          }
+          else if (res.currency) {
             // 有币种信息的显示方式
             displayText = \`\${res.token} <span class="message">(余额: <span class="balance-\${balClass}">\${balanceDisplay}</span>)</span>\`;
           } else {
